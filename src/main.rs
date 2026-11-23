@@ -119,3 +119,17 @@ fn fallback_icon() -> egui::IconData {
         height: 16,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_atlas_ico_decodes_cleanly() {
+        let (rgba, w, h) = decode_ico_rgba(ATLAS_ICO_BYTES, 64).expect("Icon.ico should decode");
+        assert_eq!((w, h), (64, 64));
+        assert_eq!(rgba.len(), 64 * 64 * 4);
+        let visible_pixels = rgba.chunks_exact(4).filter(|px| px[3] > 0).count();
+        assert!(visible_pixels > 500, "Icon.ico must contain visible pixels");
+    }
+}

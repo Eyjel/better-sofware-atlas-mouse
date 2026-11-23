@@ -1,9 +1,9 @@
 # Press Play ATLAS — Control Center (Rust)
 
-![Rust](https://img.shields.io/badge/Rust-Edition%202024-orange?logo=rust)
-![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows)
-![Sensor](https://img.shields.io/badge/Sensor-PAW3311%20(50--24000%20DPI)-00D6FF)
-![Build](https://img.shields.io/badge/Binary-~6%20MB%20Single%20EXE-2EE08A)
+![Rust](https://img.shields.io/badge/Rust-Edition%202024-orange?logo=rust&logoColor=white)
+![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6)
+![Sensor](https://img.shields.io/badge/Sensor-PAW3311%2050--24000%20DPI-00D6FF)
+![Build](https://img.shields.io/badge/Binary-Single%20EXE%20~6MB-2EE08A)
 
 Aplikasi kontrol **native Rust** yang super cepat, ringan, dan modern untuk mouse gaming **Press Play ATLAS** — dibuat sebagai pengganti software bawaan (`Mouse.exe`) yang lambat dibuka dan memiliki tampilan jadul.
 
@@ -84,10 +84,10 @@ Aplikasi ini berkomunikasi langsung dengan firmware Press Play ATLAS melalui Win
 
 ### Build dari Source
 ```bash
-git clone https://github.com/<username>/<repo>.git
-cd atlas-control
+git clone https://github.com/Eyjel/better-sofware-atlas-mouse.git
+cd better-sofware-atlas-mouse
 
-# Jalankan unit test protokol HID
+# Jalankan unit test protokol HID & icon
 cargo test
 
 # Build binary release teroptimasi (LTO + strip)
@@ -106,7 +106,7 @@ target/release/PressPlayATLAS.exe
 ## Struktur Project
 
 ```text
-atlas-control/
+better-sofware-atlas-mouse/
 ├── assets/
 │   ├── Icon.ico            # Icon aplikasi Press Play ATLAS
 │   └── app.rc              # Resource script icon Windows EXE

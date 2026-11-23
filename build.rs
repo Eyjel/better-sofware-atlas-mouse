@@ -15,16 +15,16 @@ fn main() {
         return;
     };
 
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let rc_file = manifest_dir.join("assets").join("app.rc");
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let res_path = out_dir.join("atlas_icon.res");
 
     let status = Command::new(&rc_exe)
-        .args([
-            "/nologo",
-            "/fo",
-            res_path.to_str().unwrap(),
-            "assets/app.rc",
-        ])
+        .current_dir(&manifest_dir)
+        .args(["/nologo", "/fo"])
+        .arg(&res_path)
+        .arg(&rc_file)
         .status();
 
     match status {
