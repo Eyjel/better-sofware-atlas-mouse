@@ -161,10 +161,13 @@ impl AtlasApp {
     }
 
     fn dispatch_sync(&mut self, hint: SyncHint) {
+        if !hint.needs_hardware_sync() {
+            return;
+        }
         let prof = self.cfg.active_profile().clone();
         let macros = self.cfg.macros.clone();
         match hint {
-            SyncHint::None => {}
+            SyncHint::None | SyncHint::SaveOnly => {}
             SyncHint::DpiSensor => self.hid.send(HidCommand::SyncDpiAndSensor(prof)),
             SyncHint::PowerDebounce => self.hid.send(HidCommand::SyncPowerDebounce(prof)),
             SyncHint::PollingRate => self.hid.send(HidCommand::SyncPollingRate(prof.polling_rate)),
@@ -187,10 +190,12 @@ impl AtlasApp {
                     let _ = storage::save_config(&self.cfg);
                     self.dirty_config = false;
                 }
-                if self.cfg.auto_sync && self.pending_sync != SyncHint::None {
+                if self.pending_sync != SyncHint::None {
                     let h = self.pending_sync;
                     self.pending_sync = SyncHint::None;
-                    self.dispatch_sync(h);
+                    if self.cfg.auto_sync && h.needs_hardware_sync() {
+                        self.dispatch_sync(h);
+                    }
                 }
             }
         }
@@ -202,7 +207,7 @@ impl eframe::App for AtlasApp {
         self.process_hid_events();
         self.flush_debounced_updates();
 
-        ctx.request_repaint_after(Duration::from_millis(90));
+        ctx.request_repaint_after(Duration::from_millis(120));
 
         if self.last_theme != Some(self.cfg.accent) {
             let p = Palette::from_accent(self.cfg.accent);
@@ -482,6 +487,11 @@ impl eframe::App for AtlasApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if self.cfg.auto_sync && self.pending_sync.needs_hardware_sync() {
+            let h = self.pending_sync;
+            self.pending_sync = SyncHint::None;
+            self.dispatch_sync(h);
+        }
         let _ = storage::save_config(&self.cfg);
     }
 }

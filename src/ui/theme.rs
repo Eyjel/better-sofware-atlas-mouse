@@ -50,33 +50,77 @@ impl Palette {
     }
 }
 
-/// Loads native Windows 11 Segoe UI + Cascadia Mono for ultra-crisp modern typography,
-/// falling back cleanly to egui's built-in fonts for Unicode glyphs.
+/// Loads native Windows typography directly from `%WINDIR%\Fonts` so the binary
+/// stays ultra-small without bundling ~1.1 MB of embedded fallback TTF fonts.
+/// Includes `seguisym.ttf` for crisp UI symbols (`●`, `○`, `⚡`, `■`, `÷`, `·`).
 pub fn install_modern_fonts(ctx: &egui::Context) {
-    let mut fonts = FontDefinitions::default();
+    let mut fonts = FontDefinitions::empty();
+    let windir = std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".into());
+    let font_dir = std::path::PathBuf::from(windir).join("Fonts");
 
-    if let Ok(segoe) = std::fs::read(r"C:\Windows\Fonts\segoeui.ttf") {
+    let read_first = |candidates: &[&str]| -> Option<Vec<u8>> {
+        for name in candidates {
+            if let Ok(bytes) = std::fs::read(font_dir.join(name)) {
+                return Some(bytes);
+            }
+        }
+        None
+    };
+
+    let prop_family = fonts
+        .families
+        .entry(FontFamily::Proportional)
+        .or_default();
+    let mut has_prop = false;
+    if let Some(bytes) = read_first(&["segoeui.ttf", "arial.ttf", "tahoma.ttf", "calibri.ttf"]) {
         fonts
             .font_data
-            .insert("segoe_ui".into(), Arc::new(FontData::from_owned(segoe)));
-        fonts
-            .families
-            .entry(FontFamily::Proportional)
-            .or_default()
-            .insert(0, "segoe_ui".into());
+            .insert("ui_prop".into(), Arc::new(FontData::from_owned(bytes)));
+        prop_family.push("ui_prop".into());
+        has_prop = true;
     }
 
-    if let Ok(mono) = std::fs::read(r"C:\Windows\Fonts\CascadiaMono.ttf")
-        .or_else(|_| std::fs::read(r"C:\Windows\Fonts\consola.ttf"))
-    {
+    let mono_family = fonts
+        .families
+        .entry(FontFamily::Monospace)
+        .or_default();
+    let mut has_mono = false;
+    if let Some(bytes) = read_first(&["CascadiaMono.ttf", "consola.ttf", "lucon.ttf", "cour.ttf"]) {
         fonts
             .font_data
-            .insert("cascadia_mono".into(), Arc::new(FontData::from_owned(mono)));
+            .insert("ui_mono".into(), Arc::new(FontData::from_owned(bytes)));
+        mono_family.push("ui_mono".into());
+        has_mono = true;
+    }
+
+    if !has_mono && has_prop {
         fonts
             .families
             .entry(FontFamily::Monospace)
             .or_default()
-            .insert(0, "cascadia_mono".into());
+            .push("ui_prop".into());
+    } else if !has_prop && has_mono {
+        fonts
+            .families
+            .entry(FontFamily::Proportional)
+            .or_default()
+            .push("ui_mono".into());
+    }
+
+    if let Some(sym_bytes) = read_first(&["seguisym.ttf", "arialuni.ttf"]) {
+        fonts
+            .font_data
+            .insert("ui_sym".into(), Arc::new(FontData::from_owned(sym_bytes)));
+        fonts
+            .families
+            .entry(FontFamily::Proportional)
+            .or_default()
+            .push("ui_sym".into());
+        fonts
+            .families
+            .entry(FontFamily::Monospace)
+            .or_default()
+            .push("ui_sym".into());
     }
 
     ctx.set_fonts(fonts);

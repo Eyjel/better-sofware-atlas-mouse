@@ -394,4 +394,37 @@ mod tests {
             Some(MonitorEvent::ActiveDpiStage(2))
         );
     }
+
+    #[test]
+    fn test_power_debounce_and_macro_reports() {
+        let profile = MouseProfile::factory_default("PowerTest");
+        let pwr = build_power_debounce_report(&profile);
+        assert_eq!(pwr.len(), 0x0F);
+        assert_eq!(pwr[0], 0x05);
+        assert_eq!(pwr[3], 0x00); // LED off
+        assert_eq!(pwr[9], profile.power.sleep_minutes);
+        assert_eq!(pwr[10], profile.debounce_ms / 2);
+        let expected_sum: u16 = pwr[3..=10].iter().map(|&b| b as u16).sum();
+        assert_eq!(u16::from_be_bytes([pwr[11], pwr[12]]), expected_sum);
+
+        let mut empty_macro = MacroDef::new("m0".into(), "Empty".into());
+        empty_macro.events.clear();
+        let empty_pkts = build_macro_reports(4, &empty_macro, false);
+        assert_eq!(empty_pkts.len(), 3);
+        assert_eq!(empty_pkts[0][1], 0x40);
+        assert_eq!(empty_pkts[2][1], 0x40);
+
+        let mut full_macro = MacroDef::new("m50".into(), "Full".into());
+        full_macro.events = (0..60)
+            .map(|i| crate::model::MacroEvent {
+                hid_key: 0x04,
+                pressed: i % 2 == 0,
+                delay_ms: 20,
+            })
+            .collect();
+        let wl_pkts = build_macro_reports(5, &full_macro, true);
+        assert_eq!(wl_pkts.len(), 3);
+        assert_eq!(wl_pkts[0][2], 6); // 1-based slot
+        assert_eq!(wl_pkts[2][1], 0x0C); // Wireless final chunk length
+    }
 }

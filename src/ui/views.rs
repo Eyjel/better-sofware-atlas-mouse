@@ -21,6 +21,7 @@ use crate::ui::theme::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyncHint {
     None,
+    SaveOnly,
     DpiSensor,
     PowerDebounce,
     PollingRate,
@@ -33,11 +34,15 @@ impl SyncHint {
         if other == SyncHint::None {
             return;
         }
-        if *self == SyncHint::None {
+        if *self == SyncHint::None || *self == SyncHint::SaveOnly {
             *self = other;
-        } else if *self != other {
+        } else if other != SyncHint::SaveOnly && *self != other {
             *self = SyncHint::Full;
         }
+    }
+
+    pub fn needs_hardware_sync(self) -> bool {
+        !matches!(self, SyncHint::None | SyncHint::SaveOnly)
     }
 }
 
@@ -724,6 +729,15 @@ pub fn draw_performance_view(
                                         if ui.checkbox(&mut en, "").changed() {
                                             if en || enabled_count > 1 {
                                                 prof.dpi_stages[i].enabled = en;
+                                                if !en && prof.active_dpi_stage == i {
+                                                    if let Some(next_idx) = prof
+                                                        .dpi_stages
+                                                        .iter()
+                                                        .position(|s| s.enabled)
+                                                    {
+                                                        prof.active_dpi_stage = next_idx;
+                                                    }
+                                                }
                                                 sync.merge(SyncHint::DpiSensor);
                                             }
                                         }
@@ -1262,6 +1276,13 @@ pub fn draw_macros_view(
                     ..
                 } = ev
                 {
+                    if key == Key::Escape {
+                        if pressed {
+                            state.recording_macro = false;
+                            state.last_record_time = None;
+                        }
+                        break;
+                    }
                     if let Some(hid) = egui_key_to_hid(key) {
                         let now = Instant::now();
                         let delay = state
@@ -1275,6 +1296,7 @@ pub fn draw_macros_view(
                                 pressed,
                                 delay_ms: delay,
                             });
+                            sync.merge(SyncHint::Buttons);
                         }
                     }
                 }
@@ -1305,6 +1327,9 @@ pub fn draw_macros_view(
                         );
                         cfg.macros.push(MacroDef::new(id, format!("Makro {n}")));
                         state.selected_macro_idx = cfg.macros.len() - 1;
+                        state.recording_macro = false;
+                        state.macro_all_delay_ms = 20;
+                        sync.merge(SyncHint::SaveOnly);
                     }
                     ui.add_space(10.0);
 
@@ -1340,6 +1365,7 @@ pub fn draw_macros_view(
                                             {
                                                 state.selected_macro_idx = i;
                                                 state.recording_macro = false;
+                                                state.macro_all_delay_ms = avg_macro_delay(&m.events);
                                             }
                                             ui.with_layout(
                                                 egui::Layout::right_to_left(Align::Center),
@@ -1368,10 +1394,32 @@ pub fn draw_macros_view(
                                 ui.add_space(4.0);
                             }
                             if let Some(di) = delete_idx {
-                                cfg.macros.remove(di);
+                                let removed = cfg.macros.remove(di);
+                                state.recording_macro = false;
+                                let mut affected_buttons = false;
+                                for prof in &mut cfg.profiles {
+                                    for act in &mut prof.buttons {
+                                        if matches!(act, ButtonAction::Macro { macro_id } if macro_id == &removed.id)
+                                        {
+                                            *act = ButtonAction::Disabled;
+                                            affected_buttons = true;
+                                        }
+                                    }
+                                    if prof.count_left_clicks() == 0 {
+                                        prof.buttons[0] = ButtonAction::LeftClick;
+                                    }
+                                }
                                 if state.selected_macro_idx >= cfg.macros.len() {
                                     state.selected_macro_idx = cfg.macros.len().saturating_sub(1);
                                 }
+                                if let Some(cur) = cfg.macros.get(state.selected_macro_idx) {
+                                    state.macro_all_delay_ms = avg_macro_delay(&cur.events);
+                                }
+                                sync.merge(if affected_buttons {
+                                    SyncHint::Buttons
+                                } else {
+                                    SyncHint::SaveOnly
+                                });
                             }
                         });
                 });
@@ -1402,15 +1450,21 @@ pub fn draw_macros_view(
                     // Header: Nama + Tombol Rekam
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("Nama Makro:").color(p.text_muted));
-                        ui.add(
-                            egui::TextEdit::singleline(&mut cfg.macros[idx].name)
-                                .desired_width(190.0),
-                        );
+                        if ui
+                            .add(
+                                egui::TextEdit::singleline(&mut cfg.macros[idx].name)
+                                    .desired_width(190.0),
+                            )
+                            .changed()
+                        {
+                            sync.merge(SyncHint::SaveOnly);
+                        }
 
                         ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
                             if state.recording_macro {
                                 if danger_button(ui, p, "■  Stop Rekam").clicked() {
                                     state.recording_macro = false;
+                                    state.last_record_time = None;
                                 }
                             } else if accent_button(ui, p, "●  Rekam Keyboard").clicked() {
                                 state.recording_macro = true;
@@ -1426,7 +1480,7 @@ pub fn draw_macros_view(
                             Color32::from_rgba_unmultiplied(255, 76, 104, 34),
                             p.danger,
                             p.danger,
-                            "SEDANG MEREKAM — Tekan tombol keyboard kamu (maksimal 50 langkah)...",
+                            "SEDANG MEREKAM — Tekan keyboard (maks 50 langkah, tekan Esc untuk berhenti)...",
                         );
                     }
 
@@ -1436,6 +1490,7 @@ pub fn draw_macros_view(
                     elevated_card(p).show(ui, |ui| {
                         ui.horizontal_wrapped(|ui| {
                             ui.label(RichText::new("Mode Jalan:").color(p.text_secondary));
+                            let prev_mode = cfg.macros[idx].loop_mode;
                             egui::ComboBox::from_id_salt("macro_loop_combo")
                                 .selected_text(cfg.macros[idx].loop_mode.label())
                                 .width(200.0)
@@ -1448,28 +1503,48 @@ pub fn draw_macros_view(
                                         );
                                     }
                                 });
+                            if cfg.macros[idx].loop_mode != prev_mode {
+                                sync.merge(SyncHint::Buttons);
+                            }
 
                             if cfg.macros[idx].loop_mode == MacroLoopMode::RepeatCount {
                                 ui.label(RichText::new("Ulangi:").color(p.text_secondary));
-                                ui.add(
-                                    egui::DragValue::new(&mut cfg.macros[idx].loop_count)
-                                        .range(1..=99)
-                                        .suffix("x"),
-                                );
+                                if ui
+                                    .add(
+                                        egui::DragValue::new(&mut cfg.macros[idx].loop_count)
+                                            .range(1..=99)
+                                            .suffix("x"),
+                                    )
+                                    .changed()
+                                {
+                                    sync.merge(SyncHint::Buttons);
+                                }
                             }
 
                             ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                                if ghost_button(ui, p, "Pasang ke M5").clicked() {
-                                    cfg.active_profile_mut().buttons[4] = ButtonAction::Macro {
-                                        macro_id: macro_id.clone(),
-                                    };
+                                if ghost_button(ui, p, "Pasang ke M5").clicked()
+                                    && assign_button_safe(
+                                        cfg,
+                                        4,
+                                        ButtonAction::Macro {
+                                            macro_id: macro_id.clone(),
+                                        },
+                                        state,
+                                    )
+                                {
                                     state.show_toast("Makro dipasang ke tombol M5 (Mundur)", false);
                                     sync.merge(SyncHint::Buttons);
                                 }
-                                if ghost_button(ui, p, "Pasang ke M4").clicked() {
-                                    cfg.active_profile_mut().buttons[5] = ButtonAction::Macro {
-                                        macro_id: macro_id.clone(),
-                                    };
+                                if ghost_button(ui, p, "Pasang ke M4").clicked()
+                                    && assign_button_safe(
+                                        cfg,
+                                        5,
+                                        ButtonAction::Macro {
+                                            macro_id: macro_id.clone(),
+                                        },
+                                        state,
+                                    )
+                                {
                                     state.show_toast("Makro dipasang ke tombol M4 (Maju)", false);
                                     sync.merge(SyncHint::Buttons);
                                 }
@@ -1480,6 +1555,7 @@ pub fn draw_macros_view(
                     ui.add_space(8.0);
 
                     // FITUR ALL DRAG DELAY: Atur / turunkan semua delay ms sekaligus!
+                    let has_events = !cfg.macros[idx].events.is_empty();
                     Frame::new()
                         .fill(Color32::from_rgb(19, 24, 36))
                         .stroke(Stroke::new(1.2_f32, p.accent))
@@ -1512,77 +1588,84 @@ pub fn draw_macros_view(
                             ui.add_space(6.0);
 
                             // Slider All-Drag: geser langsung ubah SEMUA step delay sekaligus!
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    RichText::new("Geser Semua:")
-                                        .size(12.0)
-                                        .color(p.text_secondary),
-                                );
-                                ui.spacing_mut().slider_width =
-                                    (ui.available_width() - 185.0).max(160.0);
-                                let slider_resp = ui.add(
-                                    egui::Slider::new(&mut state.macro_all_delay_ms, 10..=500)
-                                        .suffix(" ms"),
-                                );
-                                if slider_resp.changed() {
-                                    let val = state.macro_all_delay_ms;
-                                    for ev in &mut cfg.macros[idx].events {
-                                        ev.delay_ms = val;
+                            ui.add_enabled_ui(has_events, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new("Geser Semua:")
+                                            .size(12.0)
+                                            .color(p.text_secondary),
+                                    );
+                                    ui.spacing_mut().slider_width =
+                                        (ui.available_width() - 185.0).max(160.0);
+                                    let slider_resp = ui.add(
+                                        egui::Slider::new(&mut state.macro_all_delay_ms, 10..=500)
+                                            .suffix(" ms"),
+                                    );
+                                    if slider_resp.changed() {
+                                        let val = state.macro_all_delay_ms;
+                                        for ev in &mut cfg.macros[idx].events {
+                                            ev.delay_ms = val;
+                                        }
+                                        sync.merge(SyncHint::Buttons);
                                     }
-                                    sync.merge(SyncHint::Buttons);
-                                }
-                            });
+                                });
 
-                            ui.add_space(6.0);
+                                ui.add_space(6.0);
 
-                            // Tombol Cepat Turunin / Skala Semua Delay
-                            ui.horizontal_wrapped(|ui| {
-                                ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
-                                ui.label(
-                                    RichText::new("Ubah Cepat:")
-                                        .size(11.5)
-                                        .color(p.text_muted),
-                                );
-                                if ui.small_button("-20ms Semua").clicked() {
-                                    for ev in &mut cfg.macros[idx].events {
-                                        ev.delay_ms = ev.delay_ms.saturating_sub(20).max(10);
+                                // Tombol Cepat Turunin / Skala Semua Delay
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
+                                    ui.label(
+                                        RichText::new("Ubah Cepat:")
+                                            .size(11.5)
+                                            .color(p.text_muted),
+                                    );
+                                    let mut bulk_changed = false;
+                                    if ui.small_button("-20ms Semua").clicked() {
+                                        for ev in &mut cfg.macros[idx].events {
+                                            ev.delay_ms = ev.delay_ms.saturating_sub(20).max(10);
+                                        }
+                                        bulk_changed = true;
                                     }
-                                    sync.merge(SyncHint::Buttons);
-                                }
-                                if ui.small_button("-10ms Semua").clicked() {
-                                    for ev in &mut cfg.macros[idx].events {
-                                        ev.delay_ms = ev.delay_ms.saturating_sub(10).max(10);
+                                    if ui.small_button("-10ms Semua").clicked() {
+                                        for ev in &mut cfg.macros[idx].events {
+                                            ev.delay_ms = ev.delay_ms.saturating_sub(10).max(10);
+                                        }
+                                        bulk_changed = true;
                                     }
-                                    sync.merge(SyncHint::Buttons);
-                                }
-                                if ui.small_button("-5ms Semua").clicked() {
-                                    for ev in &mut cfg.macros[idx].events {
-                                        ev.delay_ms = ev.delay_ms.saturating_sub(5).max(10);
+                                    if ui.small_button("-5ms Semua").clicked() {
+                                        for ev in &mut cfg.macros[idx].events {
+                                            ev.delay_ms = ev.delay_ms.saturating_sub(5).max(10);
+                                        }
+                                        bulk_changed = true;
                                     }
-                                    sync.merge(SyncHint::Buttons);
-                                }
-                                if ui.small_button("+5ms Semua").clicked() {
-                                    for ev in &mut cfg.macros[idx].events {
-                                        ev.delay_ms = (ev.delay_ms + 5).min(1270);
+                                    if ui.small_button("+5ms Semua").clicked() {
+                                        for ev in &mut cfg.macros[idx].events {
+                                            ev.delay_ms = (ev.delay_ms + 5).min(1270);
+                                        }
+                                        bulk_changed = true;
                                     }
-                                    sync.merge(SyncHint::Buttons);
-                                }
-                                if ui.small_button("÷2 (50% Lebih Cepat)").clicked() {
-                                    for ev in &mut cfg.macros[idx].events {
-                                        ev.delay_ms = (ev.delay_ms / 2).max(10);
+                                    if ui.small_button("÷2 (50% Lebih Cepat)").clicked() {
+                                        for ev in &mut cfg.macros[idx].events {
+                                            ev.delay_ms = (ev.delay_ms / 2).max(10);
+                                        }
+                                        bulk_changed = true;
                                     }
-                                    sync.merge(SyncHint::Buttons);
-                                }
-                                if ui
-                                    .small_button(RichText::new("Min (10ms)").color(p.accent))
-                                    .clicked()
-                                {
-                                    state.macro_all_delay_ms = 10;
-                                    for ev in &mut cfg.macros[idx].events {
-                                        ev.delay_ms = 10;
+                                    if ui
+                                        .small_button(RichText::new("Min (10ms)").color(p.accent))
+                                        .clicked()
+                                    {
+                                        for ev in &mut cfg.macros[idx].events {
+                                            ev.delay_ms = 10;
+                                        }
+                                        bulk_changed = true;
                                     }
-                                    sync.merge(SyncHint::Buttons);
-                                }
+                                    if bulk_changed {
+                                        state.macro_all_delay_ms =
+                                            avg_macro_delay(&cfg.macros[idx].events);
+                                        sync.merge(SyncHint::Buttons);
+                                    }
+                                });
                             });
                         });
 
@@ -1739,6 +1822,14 @@ pub fn draw_macros_view(
     });
 
     sync
+}
+
+fn avg_macro_delay(events: &[MacroEvent]) -> u16 {
+    if events.is_empty() {
+        return 20;
+    }
+    let sum: u32 = events.iter().map(|e| e.delay_ms as u32).sum();
+    ((sum / events.len() as u32) as u16).clamp(10, 500)
 }
 
 fn egui_key_to_hid(key: Key) -> Option<u8> {
@@ -1952,20 +2043,23 @@ pub fn draw_power_profiles_view(
                                 .fill(if sel { col } else { p.bg_elevated })
                                 .stroke(Stroke::new(1.2_f32, col))
                                 .corner_radius(CornerRadius::same(9));
-                                if ui.add(btn).clicked() {
+                                if ui.add(btn).clicked() && cfg.accent != theme {
                                     cfg.accent = theme;
+                                    res.sync.merge(SyncHint::SaveOnly);
                                 }
                             }
                         });
 
                         ui.add_space(10.0);
-                        toggle_row(
+                        if toggle_row(
                             ui,
                             p,
                             "Sinkron Otomatis",
                             "Langsung kirim perubahan ke mouse tanpa perlu klik tombol simpan",
                             &mut cfg.auto_sync,
-                        );
+                        ) {
+                            res.sync.merge(SyncHint::SaveOnly);
+                        }
 
                         ui.add_space(10.0);
                         ui.horizontal(|ui| {
@@ -2173,6 +2267,7 @@ pub fn draw_power_profiles_view(
                         let t = state.rename_profile_buf.trim();
                         if !t.is_empty() {
                             cfg.active_profile_mut().name = t.to_string();
+                            res.sync.merge(SyncHint::SaveOnly);
                         }
                         state.renaming_profile = false;
                     }

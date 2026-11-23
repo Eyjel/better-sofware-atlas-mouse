@@ -527,6 +527,34 @@ impl MouseProfile {
             .filter(|b| self.buttons[b.slot] == ButtonAction::LeftClick)
             .count()
     }
+
+    /// Clamps and repairs any out-of-range values loaded from JSON or imported files.
+    pub fn sanitize(&mut self) {
+        if self.name.trim().is_empty() {
+            self.name = "ATLAS Profile".into();
+        }
+        for st in &mut self.dpi_stages {
+            st.dpi = snap_dpi(st.dpi);
+        }
+        if !self.dpi_stages.iter().any(|s| s.enabled) {
+            self.dpi_stages[0].enabled = true;
+        }
+        if self.active_dpi_stage >= MAX_DPI_STAGES || !self.dpi_stages[self.active_dpi_stage].enabled
+        {
+            self.active_dpi_stage = self
+                .dpi_stages
+                .iter()
+                .position(|s| s.enabled)
+                .unwrap_or(0);
+        }
+        let step = (self.debounce_ms / 2).clamp(1, 25);
+        self.debounce_ms = step * 2;
+        self.power.sleep_minutes = self.power.sleep_minutes.clamp(1, 60);
+        self.power.deep_sleep_minutes = self.power.deep_sleep_minutes.clamp(1, 60);
+        if self.count_left_clicks() == 0 {
+            self.buttons[0] = ButtonAction::LeftClick;
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -619,6 +647,30 @@ impl AppConfig {
         let idx = self.active_profile_idx.min(self.profiles.len() - 1);
         self.active_profile_idx = idx;
         &mut self.profiles[idx]
+    }
+
+    pub fn sanitize(&mut self) {
+        if self.profiles.is_empty() {
+            self.profiles.push(MouseProfile::factory_default("ATLAS Default"));
+        }
+        for prof in &mut self.profiles {
+            prof.sanitize();
+        }
+        if self.active_profile_idx >= self.profiles.len() {
+            self.active_profile_idx = 0;
+        }
+        for m in &mut self.macros {
+            if m.name.trim().is_empty() {
+                m.name = "Makro".into();
+            }
+            m.loop_count = m.loop_count.clamp(1, 99);
+            if m.events.len() > 50 {
+                m.events.truncate(50);
+            }
+            for ev in &mut m.events {
+                ev.delay_ms = ev.delay_ms.clamp(10, 1270);
+            }
+        }
     }
 }
 

@@ -556,8 +556,9 @@ pub fn draw_atlas_mouse_studio(
             FontId::proportional(10.0),
             if is_sel || is_pressed { p.accent } else { p.text_muted },
         );
-        let truncated = if binding_text.len() > 21 {
-            format!("{}...", &binding_text[..19])
+        let truncated = if binding_text.chars().count() > 21 {
+            let prefix: String = binding_text.chars().take(19).collect();
+            format!("{prefix}...")
         } else {
             binding_text
         };

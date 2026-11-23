@@ -3,7 +3,7 @@
 ![Rust](https://img.shields.io/badge/Rust-Edition%202024-orange?logo=rust&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6)
 ![Sensor](https://img.shields.io/badge/Sensor-PAW3311%2050--24000%20DPI-00D6FF)
-![Build](https://img.shields.io/badge/Binary-Single%20EXE%20~6MB-2EE08A)
+![Build](https://img.shields.io/badge/Binary-Single%20EXE%201.8MB-2EE08A)
 
 Aplikasi kontrol **native Rust** yang super cepat, ringan, dan modern untuk mouse gaming **Press Play ATLAS** — dibuat sebagai pengganti software bawaan (`Mouse.exe`) yang lambat dibuka dan memiliki tampilan jadul.
 
@@ -18,7 +18,7 @@ Aplikasi kontrol **native Rust** yang super cepat, ringan, dan modern untuk mous
 | **Kecepatan Buka** | Lambat (DuiLib + aset gambar besar) | **Instan** (GPU-accelerated `eframe`/`egui`) |
 | **Sinkronisasi Hardware** | Ada `Sleep(500ms–1000ms)` yang bikin freeze | **Non-blocking background HID thread** |
 | **Tampilan UI** | Jadul, statis, banyak menu tidak relevan (RGB palsu) | **Modern, stealth, interaktif, tanpa fitur RGB palsu** |
-| **Distribusi** | Banyak DLL (`DuiLib`, `hidapi`, `hiddriver_1/2`, dll.) | **1 file `PressPlayATLAS.exe` mandiri (~6 MB)** |
+| **Distribusi** | Banyak DLL (`DuiLib`, `hidapi`, `hiddriver_1/2`, dll.) | **1 file `PressPlayATLAS.exe` mandiri (1.8 MB)** |
 | **Penyimpanan Profil** | File biner `pro.data` tertutup | **JSON rapi** (mudah dibackup, impor, dan ekspor) |
 
 ---

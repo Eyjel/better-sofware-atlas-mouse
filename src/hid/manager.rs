@@ -103,7 +103,8 @@ fn worker_loop(cmd_rx: Receiver<HidCommand>, ev_tx: Sender<HidEvent>) {
             }
         }
 
-        let mut latest_cmd: Option<HidCommand> = None;
+        let mut pending_cmds: Vec<HidCommand> = Vec::new();
+        let mut should_shutdown = false;
         let wait_timeout = if device.is_some() {
             Duration::from_millis(20)
         } else {
@@ -115,19 +116,20 @@ fn worker_loop(cmd_rx: Receiver<HidCommand>, ev_tx: Sender<HidEvent>) {
                 if matches!(cmd, HidCommand::Shutdown) {
                     return;
                 }
-                latest_cmd = Some(cmd);
+                coalesce_command(&mut pending_cmds, cmd);
                 while let Ok(next) = cmd_rx.try_recv() {
                     if matches!(next, HidCommand::Shutdown) {
-                        return;
+                        should_shutdown = true;
+                        break;
                     }
-                    latest_cmd = Some(next);
+                    coalesce_command(&mut pending_cmds, next);
                 }
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => return,
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
 
-        if let Some(cmd) = latest_cmd {
+        for cmd in pending_cmds {
             match cmd {
                 HidCommand::Reconnect => {
                     device = None;
@@ -189,6 +191,10 @@ fn worker_loop(cmd_rx: Receiver<HidCommand>, ev_tx: Sender<HidEvent>) {
                     }
                 }
             }
+        }
+
+        if should_shutdown {
+            return;
         }
 
         if let Some(ref dev) = device {
@@ -259,5 +265,62 @@ fn build_packets_for_cmd(cmd: &HidCommand, is_wireless: bool) -> Vec<(String, Ve
             out
         }
         HidCommand::Reconnect | HidCommand::Shutdown => Vec::new(),
+    }
+}
+
+/// Losslessly coalesces rapid HID commands without dropping distinct packet types.
+fn coalesce_command(queue: &mut Vec<HidCommand>, cmd: HidCommand) {
+    match cmd {
+        HidCommand::Reconnect => {
+            queue.clear();
+            queue.push(cmd);
+        }
+        HidCommand::SyncFull { .. } => {
+            queue.retain(|c| matches!(c, HidCommand::Reconnect));
+            queue.push(cmd);
+        }
+        HidCommand::Shutdown => {
+            queue.push(cmd);
+        }
+        other => {
+            let disc = std::mem::discriminant(&other);
+            queue.retain(|c| std::mem::discriminant(c) != disc);
+            queue.push(other);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_coalesce_preserves_distinct_sync_commands() {
+        let mut q = Vec::new();
+        let prof = MouseProfile::factory_default("T");
+        coalesce_command(&mut q, HidCommand::SyncPollingRate(PollingRate::Hz500));
+        coalesce_command(&mut q, HidCommand::SyncDpiAndSensor(prof.clone()));
+        coalesce_command(&mut q, HidCommand::SyncPollingRate(PollingRate::Hz1000));
+
+        assert_eq!(q.len(), 2);
+        assert!(matches!(q[0], HidCommand::SyncDpiAndSensor(_)));
+        assert!(matches!(q[1], HidCommand::SyncPollingRate(PollingRate::Hz1000)));
+    }
+
+    #[test]
+    fn test_coalesce_sync_full_supersedes_earlier_partials() {
+        let mut q = Vec::new();
+        let prof = MouseProfile::factory_default("T");
+        coalesce_command(&mut q, HidCommand::SyncPollingRate(PollingRate::Hz500));
+        coalesce_command(&mut q, HidCommand::SyncDpiAndSensor(prof.clone()));
+        coalesce_command(
+            &mut q,
+            HidCommand::SyncFull {
+                profile: prof,
+                macros: vec![],
+            },
+        );
+        assert_eq!(q.len(), 1);
+        assert!(matches!(q[0], HidCommand::SyncFull { .. }));
     }
 }
